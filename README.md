@@ -1,6 +1,6 @@
-# Network Ping Scripts Documentation
+# Network Device Activation Scripts Documentation
 
-This directory contains two Expect scripts for automated network connectivity testing on Aruba switches.
+This directory contains two Expect scripts for activating silent network devices to trigger NAC (Network Access Control) role assignment on Aruba switches.
 
 ## Prerequisites
 
@@ -17,7 +17,7 @@ export PWORD='your_ssh_password'
 
 ### cg_ping.exp
 
-**Purpose**: Direct ping test from a switch to a client device.
+**Purpose**: Ping silent Cash Guard devices to activate network traffic, making them visible for NAC role assignment.
 
 **Usage**:
 ```bash
@@ -25,25 +25,25 @@ export PWORD='your_ssh_password'
 ```
 
 **Process**:
-1. Takes client IP as input (e.g., `10.181.195.100`)
+1. Takes client IP as input (e.g., `10.181.195.62`)
 2. Calculates switch IP: first two octets same, third octet +3, fourth octet = 252 (e.g., `10.181.198.252`)
 3. SSH connects to the switch
 4. Enables Aruba Central support mode
 5. Configures VLAN 1 with IP: client's first 3 octets + `.10` (e.g., `10.181.195.10/24`)
-6. Pings the client IP
+6. Pings the client IP to generate traffic and activate the device
 7. Cleans up: removes IP, disables support mode, exits
 
 **Example**:
 ```bash
-./cg_ping.exp 10.181.195.100
+./cg_ping.exp 10.181.195.62
 # Connects to: 10.181.198.252
 # Configures: 10.181.195.10/24
-# Pings: 10.181.195.100
+# Pings: 10.181.195.62 (activates Cash Guard device for NAC)
 ```
 
 ### envo_ping.exp
 
-**Purpose**: Two-step process - discover infrastructure IP, then perform ping test.
+**Purpose**: Two-step process to discover infrastructure and ping silent devices for NAC activation.
 
 **Usage**:
 ```bash
@@ -52,21 +52,21 @@ export PWORD='your_ssh_password'
 
 **Process**:
 1. **Step 1 - Router Discovery**:
-   - Takes client IP as input (e.g., `10.181.195.100`)
+   - Takes client IP as input (e.g., `10.181.195.64`)
    - Calculates router IP: client's first 3 octets + `.1` (e.g., `10.181.195.1`)
    - SSH connects to router
    - Executes `show ip interface brief | inc 3999` to find VLAN 3999 IP
 
-2. **Step 2 - Switch Ping Test**:
+2. **Step 2 - Device Activation**:
    - Calculates switch IP: VLAN 3999's first 3 octets + `.253`
    - SSH connects to the switch
-   - Performs same ping test as `cg_ping.exp`
+   - Pings client device to generate traffic for NAC role assignment
 
 **Example**:
 ```bash
-./envo_ping.exp 10.181.195.100
+./envo_ping.exp 10.181.195.64
 # Router: 10.181.195.1 → finds VLAN 3999: 10.205.167.1
-# Switch: 10.205.167.253 → configures 10.181.195.10/24 → pings 10.181.195.100
+# Switch: 10.205.167.253 → configures 10.181.195.10/24 → pings 10.181.195.64 (activates for NAC)
 ```
 
 ## Key Differences
@@ -76,7 +76,8 @@ export PWORD='your_ssh_password'
 | **Steps** | Single step | Two steps |
 | **Switch Discovery** | Calculated directly | Via router VLAN 3999 lookup |
 | **Router Access** | Not required | Required |
-| **Use Case** | Known switch IP pattern | Dynamic switch discovery |
+| **Use Case** | Cash Guard devices (known switch pattern) | Dynamic switch discovery |
+| **Purpose** | Direct device activation | Infrastructure discovery + activation |
 
 ## Common Features
 
@@ -85,10 +86,19 @@ Both scripts:
 - Handle SSH first-time connection prompts
 - Enable/disable Aruba Central support mode
 - Configure temporary IP on VLAN 1
-- Perform ping test to client
+- Ping silent devices to generate network traffic for NAC activation
 - Clean up configuration before exit
 - Provide detailed progress output
 - Include error handling and timeouts
+
+## Network Access Control (NAC) Integration
+
+These scripts are designed to work with NAC systems by:
+- **Generating network traffic** from silent devices that may not be actively communicating
+- **Triggering device visibility** in the network infrastructure
+- **Enabling proper role assignment** based on device characteristics and policies
+- **Supporting automated network onboarding** for devices that need traffic activation
+- **Specifically targeting Cash Guard devices** (cg_ping.exp) which typically use IP addresses ending in 60-66
 
 ## Error Handling
 
