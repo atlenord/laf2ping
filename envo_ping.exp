@@ -1,0 +1,345 @@
+#!/usr/bin/expect -f
+
+# Disable logging to prevent escape sequences
+log_user 0
+
+# Check if client IP address is provided as argument
+if {$argc != 1} {
+    puts "Usage: $argv0 <client_ip_address>"
+    puts "Example: $argv0 10.181.192.62"
+    puts ""
+    puts "Note: Set the PWORD environment variable with the SSH password:"
+    puts "export PWORD='your_password'"
+    exit 1
+}
+
+# Check if PWORD environment variable is set
+if {![info exists env(PWORD)] || $env(PWORD) eq ""} {
+    puts "Error: PWORD environment variable is not set or empty."
+    puts "Please set it with your SSH password:"
+    puts "export PWORD='your_password'"
+    exit 1
+}
+
+set client_ip [lindex $argv 0]
+set password $env(PWORD)
+
+# Parse the client IP to calculate router IP
+set ip_parts [split $client_ip "."]
+if {[llength $ip_parts] != 4} {
+    puts "Error: Invalid IP address format. Please provide a valid IPv4 address."
+    exit 1
+}
+
+set first_octet [lindex $ip_parts 0]
+set second_octet [lindex $ip_parts 1]
+set third_octet [lindex $ip_parts 2]
+set fourth_octet [lindex $ip_parts 3]
+
+# Calculate router IP: same first three octets, last octet = 1
+set router_ip "$first_octet.$second_octet.$third_octet.1"
+
+set timeout 30
+
+puts "=== STEP 1: Finding VLAN 3999 IP segment from router ==="
+puts "Client IP: $client_ip"
+puts "Router IP: $router_ip"
+puts "Connecting to router $router_ip..."
+
+# Start SSH connection to router
+spawn ssh -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no $router_ip
+set router_spawn_id $spawn_id
+
+# Handle initial SSH connection prompts for router
+expect {
+    "Are you sure you want to continue connecting" {
+        send "yes\r"
+        exp_continue
+    }
+    "password:" {
+        puts "Using password from PWORD environment variable"
+        send "$password\r"
+    }
+    timeout {
+        puts "Router connection timeout"
+        exit 1
+    }
+}
+
+# Wait for router prompt
+expect {
+    -re ".*\\*#" {
+        puts "Connected successfully to router"
+    }
+    -re ".*#" {
+        puts "Connected successfully to router"
+    }
+    timeout {
+        puts "Timeout waiting for router prompt"
+        exit 1
+    }
+}
+
+# Execute command to find VLAN 3999 IP address
+puts "Searching for VLAN 3999 IP address..."
+send "show ip interface brief | inc 3999\r"
+
+# Capture the output and extract IP address
+set vlan_found 0
+expect {
+    -re "vlan 3999\\s+(\\d+\\.\\d+\\.\\d+\\.\\d+)" {
+        set vlan3999_ip $expect_out(1,string)
+        puts "VLAN 3999 IP address found: $vlan3999_ip"
+        set vlan_found 1
+    }
+    -re ".*\\*#" {
+        puts "VLAN 3999 not found or no IP configured"
+    }
+    -re ".*#" {
+        puts "VLAN 3999 not found or no IP configured"
+    }
+    timeout {
+        puts "Timeout waiting for VLAN 3999 command output"
+        exit 1
+    }
+}
+
+if {$vlan_found == 0} {
+    puts "Error: VLAN 3999 IP not found. Cannot proceed with switch connection."
+    exit 1
+}
+
+# Exit router
+send "exit\r"
+expect {
+    eof {
+        puts "Router connection closed"
+    }
+    timeout {
+        puts "Timeout during router logout"
+    }
+}
+
+# Clean up router connection
+catch {close $router_spawn_id}
+catch {wait}
+
+# Parse VLAN 3999 IP to calculate switch destination
+set vlan_parts [split $vlan3999_ip "."]
+set vlan_first [lindex $vlan_parts 0]
+set vlan_second [lindex $vlan_parts 1]
+set vlan_third [lindex $vlan_parts 2]
+
+# Calculate switch IP: VLAN 3999 segment with .253
+set switch_ip "$vlan_first.$vlan_second.$vlan_third.253"
+
+puts ""
+puts "=== STEP 2: Connecting to switch for ping test ==="
+puts "Switch IP: $switch_ip"
+puts "Connecting to switch $switch_ip..."
+
+# Start SSH connection to switch
+spawn ssh -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no $switch_ip
+set switch_spawn_id $spawn_id
+
+# Handle initial SSH connection prompts for switch
+expect {
+    "Are you sure you want to continue connecting" {
+        send "yes\r"
+        exp_continue
+    }
+    "password:" {
+        puts "Using password from PWORD environment variable"
+        send "$password\r"
+    }
+    timeout {
+        puts "Switch connection timeout"
+        exit 1
+    }
+}
+
+# Wait for any "Press any key to continue" prompt
+expect {
+    "Press any key to continue" {
+        send "\r"
+    }
+    "#" {
+        # Already at prompt, continue
+    }
+    timeout {
+        puts "Timeout waiting for switch prompt"
+        exit 1
+    }
+}
+
+# Wait for the switch prompt
+expect {
+    -re ".*#" {
+        puts "Connected successfully to switch"
+    }
+    timeout {
+        puts "Timeout waiting for switch prompt"
+        exit 1
+    }
+}
+
+# Enter configuration mode
+send "conf t\r"
+expect {
+    -re ".*\\(config\\)#" {
+        puts "Entered configuration mode"
+    }
+    timeout {
+        puts "Failed to enter configuration mode"
+        exit 1
+    }
+}
+
+# Enable Aruba Central support mode
+send "aruba-central support-mode enable\r"
+expect {
+    "Continue (y/n)?" {
+        send "y\r"
+        expect -re ".*\\(config\\)#"
+        puts "Aruba Central support mode enabled"
+    }
+    -re ".*\\(config\\)#" {
+        puts "Aruba Central support mode already enabled"
+    }
+    timeout {
+        puts "Timeout enabling support mode"
+        exit 1
+    }
+}
+
+# Enter VLAN 1 interface
+send "int vlan 1\r"
+expect {
+    -re ".*\\(vlan-1\\)#" {
+        puts "Entered VLAN 1 interface"
+    }
+    timeout {
+        puts "Failed to enter VLAN 1 interface"
+        exit 1
+    }
+}
+
+# Configure IP address using client's first 3 octets + .10
+set config_ip "$first_octet.$second_octet.$third_octet.10"
+send "ip address $config_ip/24\r"
+expect {
+    -re ".*\\(vlan-1\\)#" {
+        puts "IP address configured: $config_ip/24"
+    }
+    timeout {
+        puts "Failed to configure IP address"
+        exit 1
+    }
+}
+
+# Ping test to client
+puts "Pinging client $client_ip..."
+send "ping $client_ip\r"
+expect {
+    -re ".*\\(vlan-1\\)#" {
+        puts "Ping command executed to $client_ip"
+    }
+    timeout {
+        puts "Ping command timeout"
+        exit 1
+    }
+}
+
+# Remove IP address
+send "no ip address\r"
+expect {
+    -re ".*\\(vlan-1\\)#" {
+        puts "IP address removed"
+    }
+    timeout {
+        puts "Failed to remove IP address"
+        exit 1
+    }
+}
+
+# Exit VLAN interface
+send "exit\r"
+expect {
+    -re ".*\\(config\\)#" {
+        puts "Exited VLAN 1 interface"
+    }
+    timeout {
+        puts "Failed to exit VLAN interface"
+        exit 1
+    }
+}
+
+# Disable Aruba Central support mode
+send "aruba-central support-mode disable\r"
+expect {
+    -re ".*\\(config\\)#" {
+        puts "Aruba Central support mode disabled"
+    }
+    timeout {
+        puts "Timeout disabling support mode"
+        exit 1
+    }
+}
+
+# Exit configuration mode
+send "exit\r"
+expect {
+    -re ".*#" {
+        puts "Exited configuration mode"
+    }
+    timeout {
+        puts "Failed to exit configuration mode"
+        exit 1
+    }
+}
+
+# Exit privileged mode
+send "exit\r"
+expect {
+    -re ".*>" {
+        puts "Exited privileged mode"
+    }
+    timeout {
+        puts "Failed to exit privileged mode"
+        exit 1
+    }
+}
+
+# Final exit
+send "exit\r"
+expect {
+    "Do you want to log out (y/n)?" {
+        send "y\r"
+        puts "Logged out successfully"
+    }
+    eof {
+        puts "Switch connection closed"
+    }
+    timeout {
+        puts "Timeout during logout"
+        exit 1
+    }
+}
+
+# Clean up switch connection
+catch {close $switch_spawn_id}
+catch {wait}
+
+# Re-enable user output and clear any remaining escape sequences
+log_user 1
+puts -nonewline "\033\[0m"
+flush stdout
+
+puts ""
+puts "=== SUMMARY ==="
+puts "Client IP: $client_ip"
+puts "Router IP: $router_ip"
+puts "VLAN 3999 IP: $vlan3999_ip"
+puts "Switch IP: $switch_ip"
+puts "Config IP used: $config_ip"
+puts "Script completed successfully"

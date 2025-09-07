@@ -1,0 +1,246 @@
+#!/usr/bin/expect -f
+
+# Disable logging and set spawn options to prevent escape sequences
+log_user 0
+set spawn_out(slave,name) ""
+
+# Check if client IP address is provided as argument
+if {$argc != 1} {
+    puts "Usage: $argv0 <client_ip_address>"
+    puts "Example: $argv0 10.181.192.62"
+    puts ""
+    puts "Note: Set the PWORD environment variable with the SSH password:"
+    puts "export PWORD='your_password'"
+    exit 1
+}
+
+# Check if PWORD environment variable is set
+if {![info exists env(PWORD)] || $env(PWORD) eq ""} {
+    puts "Error: PWORD environment variable is not set or empty."
+    puts "Please set it with your SSH password:"
+    puts "export PWORD='your_password'"
+    exit 1
+}
+
+set client_ip [lindex $argv 0]
+set password $env(PWORD)
+
+# Parse the client IP to calculate SSH destination
+set ip_parts [split $client_ip "."]
+if {[llength $ip_parts] != 4} {
+    puts "Error: Invalid IP address format. Please provide a valid IPv4 address."
+    exit 1
+}
+
+set first_octet [lindex $ip_parts 0]
+set second_octet [lindex $ip_parts 1]
+set third_octet [lindex $ip_parts 2]
+set fourth_octet [lindex $ip_parts 3]
+
+# Calculate SSH destination: same first two octets, third + 3, fourth = 253
+set ssh_third_octet [expr $third_octet + 3]
+set ssh_destination "$first_octet.$second_octet.$ssh_third_octet.252"
+
+set timeout 5
+
+puts "Client IP: $client_ip"
+puts "SSH destination: $ssh_destination"
+puts "Connecting to $ssh_destination..."
+
+# Start SSH connection
+spawn ssh -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no $ssh_destination
+set spawn_id $spawn_id
+
+# Handle initial SSH connection prompts
+expect {
+    "Are you sure you want to continue connecting" {
+        send "yes\r"
+        exp_continue
+    }
+    "password:" {
+        puts "Using password from PWORD environment variable"
+        send "$password\r"
+    }
+    timeout {
+        puts "Connection timeout"
+        exit 1
+    }
+}
+
+# Wait for any "Press any key to continue" prompt
+expect {
+    "Press any key to continue" {
+        send "\r"
+    }
+    "#" {
+        # Already at prompt, continue
+    }
+    timeout {
+        puts "Timeout waiting for prompt"
+        exit 1
+    }
+}
+
+# Wait for the switch prompt
+expect {
+    -re ".*#" {
+        puts "Connected successfully to switch"
+    }
+    timeout {
+        puts "Timeout waiting for switch prompt"
+        exit 1
+    }
+}
+
+# Enter configuration mode
+send "conf t\r"
+expect {
+    -re ".*\\(config\\)#" {
+        puts "Entered configuration mode"
+    }
+    timeout {
+        puts "Failed to enter configuration mode"
+        exit 1
+    }
+}
+
+# Enable Aruba Central support mode
+send "aruba-central support-mode enable\r"
+expect {
+    "Continue (y/n)?" {
+        send "y\r"
+        expect -re ".*\\(config\\)#"
+        puts "Aruba Central support mode enabled"
+    }
+    -re ".*\\(config\\)#" {
+        puts "Aruba Central support mode already enabled"
+    }
+    timeout {
+        puts "Timeout enabling support mode"
+        exit 1
+    }
+}
+
+# Enter VLAN 1 interface
+send "int vlan 1\r"
+expect {
+    -re ".*\\(vlan-1\\)#" {
+        puts "Entered VLAN 1 interface"
+    }
+    timeout {
+        puts "Failed to enter VLAN 1 interface"
+        exit 1
+    }
+}
+
+# Configure IP address
+set config_ip "$first_octet.$second_octet.$third_octet.10"
+send "ip address $config_ip/24\r"
+expect {
+    -re ".*\\(vlan-1\\)#" {
+        puts "IP address configured: $config_ip/24"
+    }
+    timeout {
+        puts "Failed to configure IP address"
+        exit 1
+    }
+}
+
+# Ping test
+send "ping $client_ip\r"
+expect {
+    -re ".*\\(vlan-1\\)#" {
+        puts "Ping command executed to $client_ip"
+    }
+    timeout {
+        puts "Ping command timeout"
+        exit 1
+    }
+}
+
+# Remove IP address
+send "no ip address\r"
+expect {
+    -re ".*\\(vlan-1\\)#" {
+        puts "IP address removed"
+    }
+    timeout {
+        puts "Failed to remove IP address"
+        exit 1
+    }
+}
+
+# Exit VLAN interface
+send "exit\r"
+expect {
+    -re ".*\\(config\\)#" {
+        puts "Exited VLAN 1 interface"
+    }
+    timeout {
+        puts "Failed to exit VLAN interface"
+        exit 1
+    }
+}
+
+# Disable Aruba Central support mode
+send "aruba-central support-mode disable\r"
+expect {
+    -re ".*\\(config\\)#" {
+        puts "Aruba Central support mode disabled"
+    }
+    timeout {
+        puts "Timeout disabling support mode"
+        exit 1
+    }
+}
+
+# Exit configuration mode
+send "exit\r"
+expect {
+    -re ".*#" {
+        puts "Exited configuration mode"
+    }
+    timeout {
+        puts "Failed to exit configuration mode"
+        exit 1
+    }
+}
+
+# Exit privileged mode
+send "exit\r"
+expect {
+    -re ".*>" {
+        puts "Exited privileged mode"
+    }
+    timeout {
+        puts "Failed to exit privileged mode"
+        exit 1
+    }
+}
+
+# Final exit
+send "exit\r"
+expect {
+    "Do you want to log out (y/n)?" {
+        send "y\r"
+        puts "Logged out successfully"
+    }
+    eof {
+        puts "Connection closed"
+    }
+    timeout {
+        puts "Timeout during logout"
+        exit 1
+    }
+}
+
+# Clean up and close the spawn process
+catch {close $spawn_id}
+catch {wait}
+
+# Re-enable user output and clear any remaining escape sequences
+log_user 1
+puts -nonewline "\033\[0m"
+flush stdout
+
+puts "Script completed successfully"
