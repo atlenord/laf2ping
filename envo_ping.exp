@@ -7,9 +7,13 @@ log_user 0
 if {$argc != 1} {
     puts "Usage: $argv0 <client_ip_address>"
     puts "Example: $argv0 10.181.192.62"
+    puts "         $argv0 10.181.192.255  (broadcast - pings all 2-254)"
     puts ""
     puts "Note: Set the PWORD environment variable with the SSH password:"
     puts "export PWORD='your_password'"
+    puts ""
+    puts "Special case: If IP ends with .255, script will ping all devices"
+    puts "             in the /24 range from .2 to .254"
     exit 1
 }
 
@@ -36,6 +40,13 @@ set second_octet [lindex $ip_parts 1]
 set third_octet [lindex $ip_parts 2]
 set fourth_octet [lindex $ip_parts 3]
 
+# Check if this is a broadcast address (.255)
+set is_broadcast 0
+if {$fourth_octet == 255} {
+    set is_broadcast 1
+    puts "Broadcast address detected - will ping all devices in /24 range (2-254)"
+}
+
 # Calculate router IP: same first three octets, last octet = 1
 set router_ip "$first_octet.$second_octet.$third_octet.1"
 
@@ -43,6 +54,11 @@ set timeout 30
 
 puts "=== STEP 1: Finding VLAN 3999 IP segment from router ==="
 puts "Client IP: $client_ip"
+if {$is_broadcast == 1} {
+    puts "Mode: Broadcast ping (will ping .2 to .254 in /24 range)"
+} else {
+    puts "Mode: Single device ping"
+}
 puts "Router IP: $router_ip"
 puts "Connecting to router $router_ip..."
 
@@ -238,15 +254,33 @@ expect {
 }
 
 # Ping test to client
-puts "Pinging client $client_ip..."
-send "ping $client_ip\r"
-expect {
-    -re ".*\\(vlan-1\\)#" {
-        puts "Ping command executed to $client_ip"
+if {$is_broadcast == 1} {
+    puts "Starting broadcast ping to all devices in range $first_octet.$second_octet.$third_octet.2-254..."
+    for {set i 2} {$i <= 254} {incr i} {
+        set target_ip "$first_octet.$second_octet.$third_octet.$i"
+        puts "Pinging $target_ip..."
+        send "ping $target_ip\r"
+        expect {
+            -re ".*\\(vlan-1\\)#" {
+                # Continue to next IP
+            }
+            timeout {
+                puts "Timeout pinging $target_ip"
+            }
+        }
     }
-    timeout {
-        puts "Ping command timeout"
-        exit 1
+    puts "Completed pinging all devices in /24 range"
+} else {
+    puts "Pinging single device $client_ip..."
+    send "ping $client_ip\r"
+    expect {
+        -re ".*\\(vlan-1\\)#" {
+            puts "Ping command executed to $client_ip"
+        }
+        timeout {
+            puts "Ping command timeout"
+            exit 1
+        }
     }
 }
 

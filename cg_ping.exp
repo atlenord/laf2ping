@@ -8,9 +8,15 @@ set spawn_out(slave,name) ""
 if {$argc != 1} {
     puts "Usage: $argv0 <client_ip_address>"
     puts "Example: $argv0 10.181.192.62"
+    puts "         $argv0 10.181.192.255  (broadcast - pings all 2-254)"
+    puts "         $argv0 10.181.192.65   (Cash Guard range - pings all 60-69)"
     puts ""
     puts "Note: Set the PWORD environment variable with the SSH password:"
     puts "export PWORD='your_password'"
+    puts ""
+    puts "Special modes:"
+    puts "  - IP ending with .255: pings all devices in /24 range (2-254)"
+    puts "  - IP ending with .60-.69: pings all Cash Guards in range (60-69)"
     exit 1
 }
 
@@ -37,13 +43,32 @@ set second_octet [lindex $ip_parts 1]
 set third_octet [lindex $ip_parts 2]
 set fourth_octet [lindex $ip_parts 3]
 
+# Check ping mode based on fourth octet
+set is_broadcast 0
+set is_cashguard_range 0
+
+if {$fourth_octet == 255} {
+    set is_broadcast 1
+    puts "Broadcast address detected - will ping all devices in /24 range (2-254)"
+} elseif {$fourth_octet >= 60 && $fourth_octet <= 69} {
+    set is_cashguard_range 1
+    puts "Cash Guard range detected - will ping all Cash Guards in range (60-69)"
+}
+
 # Calculate SSH destination: same first two octets, third + 3, fourth = 253
 set ssh_third_octet [expr $third_octet + 3]
-set ssh_destination "$first_octet.$second_octet.$ssh_third_octet.252"
+set ssh_destination "$first_octet.$second_octet.$ssh_third_octet.253"
 
 set timeout 5
 
 puts "Client IP: $client_ip"
+if {$is_broadcast == 1} {
+    puts "Mode: Broadcast ping (will ping .2 to .254 in /24 range)"
+} elseif {$is_cashguard_range == 1} {
+    puts "Mode: Cash Guard range ping (will ping .60 to .69)"
+} else {
+    puts "Mode: Single device ping"
+}
 puts "SSH destination: $ssh_destination"
 puts "Connecting to $ssh_destination..."
 
@@ -147,14 +172,49 @@ expect {
 }
 
 # Ping test
-send "ping $client_ip\r"
-expect {
-    -re ".*\\(vlan-1\\)#" {
-        puts "Ping command executed to $client_ip"
+if {$is_broadcast == 1} {
+    puts "Starting broadcast ping to all devices in range $first_octet.$second_octet.$third_octet.2-254..."
+    for {set i 2} {$i <= 254} {incr i} {
+        set target_ip "$first_octet.$second_octet.$third_octet.$i"
+        puts "Pinging $target_ip..."
+        send "ping $target_ip\r"
+        expect {
+            -re ".*\\(vlan-1\\)#" {
+                # Continue to next IP
+            }
+            timeout {
+                puts "Timeout pinging $target_ip"
+            }
+        }
     }
-    timeout {
-        puts "Ping command timeout"
-        exit 1
+    puts "Completed pinging all devices in /24 range"
+} elseif {$is_cashguard_range == 1} {
+    puts "Starting Cash Guard range ping to devices $first_octet.$second_octet.$third_octet.60-69..."
+    for {set i 60} {$i <= 69} {incr i} {
+        set target_ip "$first_octet.$second_octet.$third_octet.$i"
+        puts "Pinging Cash Guard $target_ip..."
+        send "ping $target_ip\r"
+        expect {
+            -re ".*\\(vlan-1\\)#" {
+                # Continue to next IP
+            }
+            timeout {
+                puts "Timeout pinging $target_ip"
+            }
+        }
+    }
+    puts "Completed pinging all Cash Guard devices in range 60-69"
+} else {
+    puts "Pinging single device $client_ip..."
+    send "ping $client_ip\r"
+    expect {
+        -re ".*\\(vlan-1\\)#" {
+            puts "Ping command executed to $client_ip"
+        }
+        timeout {
+            puts "Ping command timeout"
+            exit 1
+        }
     }
 }
 
