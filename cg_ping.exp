@@ -9,14 +9,14 @@ if {$argc != 1} {
     puts "Usage: $argv0 <client_ip_address>"
     puts "Example: $argv0 10.181.192.62"
     puts "         $argv0 10.181.192.255  (broadcast - pings all 2-254)"
-    puts "         $argv0 10.181.192.65   (Cash Guard range - pings all 60-69)"
+    puts "         $argv0 10.181.192.6x   (Cash Guard range - pings all 60-69)"
     puts ""
     puts "Note: Set the PWORD environment variable with the SSH password:"
     puts "export PWORD='your_password'"
     puts ""
     puts "Special modes:"
     puts "  - IP ending with .255: pings all devices in /24 range (2-254)"
-    puts "  - IP ending with .60-.69: pings all Cash Guards in range (60-69)"
+    puts "  - IP ending with 6x (e.g., .6x): pings all Cash Guards in range (60-69)"
     exit 1
 }
 
@@ -50,9 +50,9 @@ set is_cashguard_range 0
 if {$fourth_octet == 255} {
     set is_broadcast 1
     puts "Broadcast address detected - will ping all devices in /24 range (2-254)"
-} elseif {$fourth_octet >= 60 && $fourth_octet <= 69} {
+} elseif {[string match "*6x*" $fourth_octet]} {
     set is_cashguard_range 1
-    puts "Cash Guard range detected - will ping all Cash Guards in range (60-69)"
+    puts "Cash Guard range pattern detected (6x) - will ping all Cash Guards in range (60-69)"
 }
 
 # Calculate SSH destination: same first two octets, third + 3, fourth = 253
@@ -65,7 +65,7 @@ puts "Client IP: $client_ip"
 if {$is_broadcast == 1} {
     puts "Mode: Broadcast ping (will ping .2 to .254 in /24 range)"
 } elseif {$is_cashguard_range == 1} {
-    puts "Mode: Cash Guard range ping (will ping .60 to .69)"
+    puts "Mode: Cash Guard range ping (6x pattern - will ping .60 to .69)"
 } else {
     puts "Mode: Single device ping"
 }

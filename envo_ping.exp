@@ -8,12 +8,14 @@ if {$argc != 1} {
     puts "Usage: $argv0 <client_ip_address>"
     puts "Example: $argv0 10.181.192.62"
     puts "         $argv0 10.181.192.255  (broadcast - pings all 2-254)"
+    puts "         $argv0 10.181.192.7x   (7x range - pings all 73-77)"
     puts ""
     puts "Note: Set the PWORD environment variable with the SSH password:"
     puts "export PWORD='your_password'"
     puts ""
-    puts "Special case: If IP ends with .255, script will ping all devices"
-    puts "             in the /24 range from .2 to .254"
+    puts "Special modes:"
+    puts "  - IP ending with .255: pings all devices in /24 range (2-254)"
+    puts "  - IP ending with 7x (e.g., .7x): pings devices in range (73-77)"
     exit 1
 }
 
@@ -40,11 +42,16 @@ set second_octet [lindex $ip_parts 1]
 set third_octet [lindex $ip_parts 2]
 set fourth_octet [lindex $ip_parts 3]
 
-# Check if this is a broadcast address (.255)
+# Check ping mode based on fourth octet
 set is_broadcast 0
+set is_7x_range 0
+
 if {$fourth_octet == 255} {
     set is_broadcast 1
     puts "Broadcast address detected - will ping all devices in /24 range (2-254)"
+} elseif {[string match "*7x*" $fourth_octet]} {
+    set is_7x_range 1
+    puts "7x range pattern detected - will ping devices in range (73-77)"
 }
 
 # Calculate router IP: same first three octets, last octet = 1
@@ -56,6 +63,8 @@ puts "=== STEP 1: Finding VLAN 3999 IP segment from router ==="
 puts "Client IP: $client_ip"
 if {$is_broadcast == 1} {
     puts "Mode: Broadcast ping (will ping .2 to .254 in /24 range)"
+} elseif {$is_7x_range == 1} {
+    puts "Mode: 7x range ping (will ping .73 to .77)"
 } else {
     puts "Mode: Single device ping"
 }
@@ -270,6 +279,22 @@ if {$is_broadcast == 1} {
         }
     }
     puts "Completed pinging all devices in /24 range"
+} elseif {$is_7x_range == 1} {
+    puts "Starting 7x range ping to devices $first_octet.$second_octet.$third_octet.73-77..."
+    for {set i 73} {$i <= 77} {incr i} {
+        set target_ip "$first_octet.$second_octet.$third_octet.$i"
+        puts "Pinging device $target_ip..."
+        send "ping $target_ip\r"
+        expect {
+            -re ".*\\(vlan-1\\)#" {
+                # Continue to next IP
+            }
+            timeout {
+                puts "Timeout pinging $target_ip"
+            }
+        }
+    }
+    puts "Completed pinging all devices in range 73-77"
 } else {
     puts "Pinging single device $client_ip..."
     send "ping $client_ip\r"
