@@ -1,6 +1,7 @@
 # Network Device Activation Scripts Documentation
 
 This directory contains two Expect scripts for activating silent network devices to trigger NAC (Network Access Control) role assignment on Aruba switches.
+Tested on linuxmaster
 
 ## Prerequisites
 
