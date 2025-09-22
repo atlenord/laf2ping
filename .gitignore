@@ -1,0 +1,3 @@
+# Exclude specific scripts
+fnd_infraip.exp
+tpwd.exp

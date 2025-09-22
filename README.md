@@ -74,12 +74,12 @@ export PWORD='your_ssh_password'
 
 **Process**:
 1. **Step 1 - Router Discovery**:
-   - Takes client IP as input (e.g., `10.181.195.64`)
+   - Takes client IP as input (e.g., `10.54.140.73`)
    - **Mode Detection**: 
      - `.255` = Broadcast mode (pings all .2-.254)
      - `.7x` = 7x range mode (pings all .73-.77)
      - Other = Single device mode
-   - Calculates router IP: client's first 3 octets + `.1` (e.g., `10.181.195.1`)
+   - Calculates router IP: client's first 3 octets + `.1` (e.g., `10.54.140.1`)
    - SSH connects to router
    - Executes `show ip interface brief | inc 3999` to find VLAN 3999 IP
 
@@ -91,19 +91,19 @@ export PWORD='your_ssh_password'
 **Examples**:
 ```bash
 # Single device activation
-./envo_ping.exp 10.181.195.64
-# Router: 10.181.195.1 → finds VLAN 3999: 10.205.167.1
-# Switch: 10.205.167.253 → configures 10.181.195.10/24 → pings 10.181.195.64
+./envo_ping.exp 10.54.140.73
+# Router: 10.54.140.1 → finds VLAN 3999: 10.205.167.1
+# Switch: 10.205.167.253 → configures 10.54.140.10/24 → pings 10.54.140.73
 
 # 7x range activation (devices in 73-77 range)
-./envo_ping.exp 10.181.195.7x
-# Router: 10.181.195.1 → finds VLAN 3999: 10.205.167.1
-# Switch: 10.205.167.253 → configures 10.181.195.10/24 → pings .73-.77
+./envo_ping.exp 10.54.140.7x
+# Router: 10.54.140.1 → finds VLAN 3999: 10.205.167.1
+# Switch: 10.205.167.253 → configures 10.54.140.10/24 → pings .73-.77
 
 # Broadcast activation (all devices in segment)
-./envo_ping.exp 10.181.195.255
-# Router: 10.181.195.1 → finds VLAN 3999: 10.205.167.1
-# Switch: 10.205.167.253 → configures 10.181.195.10/24 → pings .2-.254
+./envo_ping.exp 10.54.140.255
+# Router: 10.54.140.1 → finds VLAN 3999: 10.205.167.1
+# Switch: 10.205.167.253 → configures 10.54.140.10/24 → pings .2-.254
 ```
 
 ## Key Differences
@@ -139,7 +139,7 @@ Specifically designed for devices that use IP addresses ending in 73-77:
 
 **Activation**: Use `.7x` as the last octet:
 ```bash
-./envo_ping.exp 10.181.195.7x     # Activates devices (73-77) in 10.181.195.x
+./envo_ping.exp 10.54.140.7x     # Activates devices (73-77) in 10.54.140.x
 ```
 
 **Behavior**:
@@ -154,7 +154,7 @@ Both scripts support broadcast mode for activating all devices in a network segm
 **Activation**: Use `.255` as the last octet:
 ```bash
 ./cg_ping.exp 10.181.195.255     # Activates all devices in 10.181.195.x
-./envo_ping.exp 10.181.195.255   # Activates all devices in 10.181.195.x
+./envo_ping.exp 10.54.140.255    # Activates all devices in 10.54.140.x
 ```
 
 **Behavior**:
