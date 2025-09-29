@@ -1,0 +1,320 @@
+#!/usr/bin/expect -f
+
+# Disable logging to prevent escape sequences
+log_user 0
+
+# Check if client IP address is provided as argument
+if {$argc != 1} {
+    puts "Usage: $argv0 <client_ip_address>"
+    puts "Example: $argv0 10.181.192.62"
+    puts "         $argv0 10.181.192.255    (broadcast - pings all 2-254)"
+    puts "         $argv0 10.181.192.60-69  (range - pings all 60-69)"
+    puts "         $argv0 10.181.192.73-77  (range - pings all 73-77)"
+    puts ""
+    puts "Note: Set the PWORD environment variable with the SSH password:"
+    puts "export PWORD='your_password'"
+    puts ""
+    puts "Special modes:"
+    puts "  - IP ending with .255: pings all devices in /24 range (2-254)"
+    puts "  - IP with range format (e.g., .60-69): pings specified range"
+    exit 1
+}
+
+# Check if PWORD environment variable is set
+if {![info exists env(PWORD)] || $env(PWORD) eq ""} {
+    puts "Error: PWORD environment variable is not set or empty."
+    puts "Please set it with your SSH password:"
+    puts "export PWORD='your_password'"
+    exit 1
+}
+
+set client_ip [lindex $argv 0]
+set password $env(PWORD)
+
+# Parse the client IP to calculate gateway IP
+set ip_parts [split $client_ip "."]
+if {[llength $ip_parts] != 4} {
+    puts "Error: Invalid IP address format. Please provide a valid IPv4 address."
+    exit 1
+}
+
+set first_octet [lindex $ip_parts 0]
+set second_octet [lindex $ip_parts 1]
+set third_octet [lindex $ip_parts 2]
+set fourth_octet [lindex $ip_parts 3]
+
+# Check ping mode based on fourth octet
+set is_broadcast 0
+set is_range 0
+set range_start 0
+set range_end 0
+
+if {$fourth_octet == 255} {
+    set is_broadcast 1
+    puts "Broadcast address detected - will ping all devices in /24 range (2-254)"
+} elseif {[string match "*-*" $fourth_octet]} {
+    set is_range 1
+    set range_parts [split $fourth_octet "-"]
+    set range_start [lindex $range_parts 0]
+    set range_end [lindex $range_parts 1]
+    puts "Range pattern detected ($range_start-$range_end) - will ping devices in range"
+}
+
+# Calculate gateway IP: same first three octets, last octet = 1
+set gateway_ip "$first_octet.$second_octet.$third_octet.1"
+
+set timeout 30
+
+puts "Client IP: $client_ip"
+if {$is_broadcast == 1} {
+    puts "Mode: Broadcast ping (will ping .2 to .254 in /24 range)"
+} elseif {$is_range == 1} {
+    puts "Mode: Range ping (will ping .$range_start to .$range_end)"
+} else {
+    puts "Mode: Single device ping"
+}
+puts "Gateway IP: $gateway_ip"
+puts "Connecting to gateway $gateway_ip..."
+
+# Start SSH connection to gateway
+spawn ssh -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no $gateway_ip
+set gateway_spawn_id $spawn_id
+
+# Handle initial SSH connection prompts for gateway
+expect {
+    "Are you sure you want to continue connecting" {
+        send "yes\r"
+        exp_continue
+    }
+    "password:" {
+        puts "Using password from PWORD environment variable"
+        send "$password\r"
+    }
+    timeout {
+        puts "Gateway connection timeout"
+        exit 1
+    }
+}
+
+# Wait for gateway prompt
+expect {
+    -re ".*\\*#" {
+        puts "Connected successfully to gateway"
+    }
+    -re ".*#" {
+        puts "Connected successfully to gateway"
+    }
+    -re ".*>" {
+        puts "Connected successfully to gateway"
+    }
+    timeout {
+        puts "Timeout waiting for gateway prompt"
+        exit 1
+    }
+}
+
+# Execute ping commands based on mode
+set successful_pings [list]
+set failed_pings [list]
+set total_pings 0
+
+if {$is_broadcast == 1} {
+    puts "Starting broadcast ping to all devices in range $first_octet.$second_octet.$third_octet.2-254..."
+    for {set i 2} {$i <= 254} {incr i} {
+        set target_ip "$first_octet.$second_octet.$third_octet.$i"
+        puts -nonewline "Pinging $target_ip... "
+        flush stdout
+        incr total_pings
+        send "ping $target_ip count 2\r"
+        set ping_success 0
+        expect {
+            -re "2 packets transmitted, (\\d+) (packets )?received.*\\n.*%" {
+                set received $expect_out(1,string)
+                if {$received > 0} {
+                    puts "SUCCESS ($received/2 packets)"
+                    lappend successful_pings $target_ip
+                    set ping_success 1
+                } else {
+                    puts "FAILED (0/2 packets)"
+                    lappend failed_pings $target_ip
+                }
+            }
+            -re "100% packet loss" {
+                puts "FAILED (100% loss)"
+                lappend failed_pings $target_ip
+            }
+            -re "(\\d+)% packet loss" {
+                set loss $expect_out(1,string)
+                if {$loss < 100} {
+                    puts "SUCCESS (${loss}% loss)"
+                    lappend successful_pings $target_ip
+                    set ping_success 1
+                } else {
+                    puts "FAILED (${loss}% loss)"
+                    lappend failed_pings $target_ip
+                }
+            }
+            -re ".*\\*#|.*#|.*>" {
+                if {$ping_success == 0} {
+                    puts "FAILED (no response)"
+                    lappend failed_pings $target_ip
+                }
+            }
+            timeout {
+                puts "TIMEOUT"
+                lappend failed_pings $target_ip
+            }
+        }
+    }
+    puts "Completed pinging all devices in /24 range"
+} elseif {$is_range == 1} {
+    puts "Starting range ping to devices $first_octet.$second_octet.$third_octet.$range_start-$range_end..."
+    for {set i $range_start} {$i <= $range_end} {incr i} {
+        set target_ip "$first_octet.$second_octet.$third_octet.$i"
+        puts -nonewline "Pinging device $target_ip... "
+        flush stdout
+        incr total_pings
+        send "ping $target_ip count 2\r"
+        set ping_success 0
+        expect {
+            -re "2 packets transmitted, (\\d+) (packets )?received.*\\n.*%" {
+                set received $expect_out(1,string)
+                if {$received > 0} {
+                    puts "SUCCESS ($received/2 packets)"
+                    lappend successful_pings $target_ip
+                    set ping_success 1
+                } else {
+                    puts "FAILED (0/2 packets)"
+                    lappend failed_pings $target_ip
+                }
+            }
+            -re "100% packet loss" {
+                puts "FAILED (100% loss)"
+                lappend failed_pings $target_ip
+            }
+            -re "(\\d+)% packet loss" {
+                set loss $expect_out(1,string)
+                if {$loss < 100} {
+                    puts "SUCCESS (${loss}% loss)"
+                    lappend successful_pings $target_ip
+                    set ping_success 1
+                } else {
+                    puts "FAILED (${loss}% loss)"
+                    lappend failed_pings $target_ip
+                }
+            }
+            -re ".*\\*#|.*#|.*>" {
+                if {$ping_success == 0} {
+                    puts "FAILED (no response)"
+                    lappend failed_pings $target_ip
+                }
+            }
+            timeout {
+                puts "TIMEOUT"
+                lappend failed_pings $target_ip
+            }
+        }
+    }
+    puts "Completed pinging all devices in range $range_start-$range_end"
+} else {
+    puts -nonewline "Pinging single device $client_ip... "
+    flush stdout
+    incr total_pings
+    send "ping $client_ip count 4\r"
+    set ping_success 0
+    expect {
+        -re "4 packets transmitted, (\\d+) (packets )?received.*\\n.*%" {
+            set received $expect_out(1,string)
+            if {$received > 0} {
+                puts "SUCCESS ($received/4 packets)"
+                lappend successful_pings $client_ip
+                set ping_success 1
+            } else {
+                puts "FAILED (0/4 packets)"
+                lappend failed_pings $client_ip
+            }
+        }
+        -re "100% packet loss" {
+            puts "FAILED (100% loss)"
+            lappend failed_pings $client_ip
+        }
+        -re "(\\d+)% packet loss" {
+            set loss $expect_out(1,string)
+            if {$loss < 100} {
+                puts "SUCCESS (${loss}% loss)"
+                lappend successful_pings $client_ip
+                set ping_success 1
+            } else {
+                puts "FAILED (${loss}% loss)"
+                lappend failed_pings $client_ip
+            }
+        }
+        -re ".*\\*#|.*#|.*>" {
+            if {$ping_success == 0} {
+                puts "FAILED (no response)"
+                lappend failed_pings $client_ip
+            }
+        }
+        timeout {
+            puts "TIMEOUT"
+            lappend failed_pings $client_ip
+        }
+    }
+}
+
+# Exit gateway
+send "exit\r"
+expect {
+    eof {
+        puts "Gateway connection closed"
+    }
+    timeout {
+        puts "Timeout during gateway logout"
+    }
+}
+
+# Clean up gateway connection
+catch {close $gateway_spawn_id}
+catch {wait}
+
+# Re-enable user output and clear any remaining escape sequences
+log_user 1
+puts -nonewline "\033\[0m"
+flush stdout
+
+puts ""
+puts "=== SUMMARY ==="
+puts "Client IP: $client_ip"
+puts "Gateway IP: $gateway_ip"
+if {$is_broadcast == 1} {
+    puts "Mode: Broadcast ping (pinged .2 to .254)"
+} elseif {$is_range == 1} {
+    puts "Mode: Range ping (pinged .$range_start to .$range_end)"
+} else {
+    puts "Mode: Single device ping"
+}
+
+puts ""
+puts "=== PING RESULTS ==="
+puts "Total devices pinged: $total_pings"
+puts "Successful pings: [llength $successful_pings]"
+puts "Failed pings: [llength $failed_pings]"
+
+if {[llength $successful_pings] > 0} {
+    puts ""
+    puts "SUCCESSFUL PINGS:"
+    foreach ip $successful_pings {
+        puts "  ✓ $ip"
+    }
+}
+
+if {[llength $failed_pings] > 0} {
+    puts ""
+    puts "FAILED PINGS:"
+    foreach ip $failed_pings {
+        puts "  ✗ $ip"
+    }
+}
+
+puts ""
+puts "Script completed successfully"

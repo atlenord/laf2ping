@@ -1,6 +1,13 @@
 # Network Device Activation Scripts Documentation
 
-This directory contains two Expect scripts for activating silent network devices to trigger NAC (Network Access Control) role assignment on Aruba switches.
+This directory contains three Expect scripts for activating silent network devices to trigger NAC (N| Feature | cg_ping.exp | envo_ping.exp | user_ping.exp |
+|---------|-------------|---------------|---------------|
+| **Steps** | Single step | Two steps | Single step |
+| **Switch Discovery** | Calculated directly | Via router VLAN 3999 lookup | Not required |
+| **Router Access** | Not required | Required | Required (gateway) |
+| **Use Case** | Cash Guard devices (known switch pattern) | Dynamic switch discovery | Direct gateway ping |
+| **Purpose** | Direct device activation | Infrastructure discovery + activation | Gateway-based ping activation |
+| **Ping Modes** | Single, Cash Guard range (.6x), Broadcast (.255) | Single, 7x range (.7x), Broadcast (.255) | Single, Range (x-y), Broadcast (.255) |ccess Control) role assignment on Aruba switches.
 Tested on linuxmaster
 
 ## Prerequisites
@@ -106,9 +113,50 @@ export PWORD='your_ssh_password'
 # Switch: 10.205.167.253 → configures 10.54.140.10/24 → pings .2-.254
 ```
 
+### user_ping.exp
+
+**Purpose**: Simple ping from gateway device to activate network traffic directly from the network gateway.
+
+**Usage**:
+```bash
+./user_ping.exp <client_ip>
+./user_ping.exp <network>.255      # Broadcast mode
+./user_ping.exp <network>.60-69    # Range mode
+```
+
+**Process**:
+1. Takes client IP as input (e.g., `10.54.140.73`)
+2. **Mode Detection**: 
+   - `.255` = Broadcast mode (pings all .2-.254)
+   - Range format (e.g., `.60-69`) = Range mode (pings specified range)
+   - Other = Single device mode
+3. Calculates gateway IP: client's first 3 octets + `.1` (e.g., `10.54.140.1`)
+4. SSH connects to the gateway
+5. Executes ping commands based on detected mode
+6. Exits gateway connection
+
+**Examples**:
+```bash
+# Single device activation
+./user_ping.exp 10.54.140.73
+# Gateway: 10.54.140.1 → pings 10.54.140.73 (4 ping packets)
+
+# Range activation (devices in specified range)
+./user_ping.exp 10.54.140.73-77
+# Gateway: 10.54.140.1 → pings 10.54.140.73 through 10.54.140.77 (2 pings each)
+
+# Range activation (Cash Guard devices)
+./user_ping.exp 10.54.140.60-69
+# Gateway: 10.54.140.1 → pings 10.54.140.60 through 10.54.140.69 (2 pings each)
+
+# Broadcast activation (all devices in segment)
+./user_ping.exp 10.54.140.255
+# Gateway: 10.54.140.1 → pings 10.54.140.2 through 10.54.140.254 (2 pings each)
+```
+
 ## Key Differences
 
-| Feature | cg_ping.exp | envo_ping.exp |
+| Feature | cg_ping.exp | envo_ping.exp | user_ping.exp |
 |---------|-------------|---------------|
 | **Steps** | Single step | Two steps |
 | **Switch Discovery** | Calculated directly | Via router VLAN 3999 lookup |
@@ -147,6 +195,22 @@ Specifically designed for devices that use IP addresses ending in 73-77:
 - **Use Case**: Targeted activation of specific device range
 - **Performance**: ~15-30 seconds (very fast, focused range)
 
+### Range Mode (user_ping.exp only)
+
+Flexible range mode that allows pinging any specified range of IP addresses:
+
+**Activation**: Use range format as the last octet:
+```bash
+./user_ping.exp 10.54.140.60-69     # Activates devices (60-69) in 10.54.140.x
+./user_ping.exp 10.54.140.73-77     # Activates devices (73-77) in 10.54.140.x
+./user_ping.exp 10.54.140.100-110   # Activates devices (100-110) in 10.54.140.x
+```
+
+**Behavior**:
+- **Range**: Pings IP addresses from start to end range (inclusive)
+- **Use Case**: Flexible targeted activation of any device range
+- **Performance**: Depends on range size (~2-5 seconds per IP)
+
 ### Broadcast Mode
 
 Both scripts support broadcast mode for activating all devices in a network segment:
@@ -155,6 +219,7 @@ Both scripts support broadcast mode for activating all devices in a network segm
 ```bash
 ./cg_ping.exp 10.181.195.255     # Activates all devices in 10.181.195.x
 ./envo_ping.exp 10.54.140.255    # Activates all devices in 10.54.140.x
+./user_ping.exp 10.54.140.255    # Activates all devices in 10.54.140.x
 ```
 
 **Behavior**:
@@ -167,25 +232,27 @@ Both scripts support broadcast mode for activating all devices in a network segm
 
 | Mode | Trigger | IP Range | Device Count | Time | Use Case | Available In |
 |------|---------|----------|--------------|------|----------|--------------|
-| **Single** | Specific IP | One IP | 1 | ~5 seconds | Individual device | Both scripts |
+| **Single** | Specific IP | One IP | 1 | ~5 seconds | Individual device | All scripts |
 | **Cash Guard** | `.6x` | .60-.69 | 10 | ~1 minute | Cash Guard devices only | cg_ping.exp |
 | **7x Range** | `.7x` | .73-.77 | 5 | ~30 seconds | Specific device range | envo_ping.exp |
-| **Broadcast** | `.255` | .2-.254 | 253 | ~5 minutes | All devices | Both scripts |
+| **Range** | `.x-y` | .x-.y | Variable | ~2-5s per IP | Flexible device range | user_ping.exp |
+| **Broadcast** | `.255` | .2-.254 | 253 | ~5 minutes | All devices | All scripts |
 
 ## Common Features
 
-Both scripts:
+All scripts:
 - Use `PWORD` environment variable for authentication
 - Handle SSH first-time connection prompts
-- Enable/disable Aruba Central support mode
-- Configure temporary IP on VLAN 1
 - Support single device and broadcast ping modes
-- **cg_ping.exp** additionally supports Cash Guard range mode (.6x)
-- **envo_ping.exp** additionally supports 7x range mode (.7x)
 - Ping silent devices to generate network traffic for NAC activation
-- Clean up configuration before exit
+- Clean up configuration before exit (where applicable)
 - Provide detailed progress output
 - Include error handling and timeouts
+
+**Script-specific features**:
+- **cg_ping.exp**: Enables/disables Aruba Central support mode, configures temporary IP on VLAN 1, supports Cash Guard range mode (.6x)
+- **envo_ping.exp**: Two-step router discovery process, enables/disables Aruba Central support mode, configures temporary IP on VLAN 1, supports 7x range mode (.7x)
+- **user_ping.exp**: Simple gateway-based ping, supports flexible range mode (.x-y format)
 
 ## Network Access Control (NAC) Integration
 
@@ -195,6 +262,7 @@ These scripts are designed to work with NAC systems by:
 - **Enabling proper role assignment** based on device characteristics and policies
 - **Supporting automated network onboarding** for devices that need traffic activation
 - **Specifically targeting Cash Guard devices** (cg_ping.exp) which typically use IP addresses ending in 60-66
+- **Providing flexible gateway-based activation** (user_ping.exp) for simple network troubleshooting and device activation
 
 ## Error Handling
 
@@ -205,10 +273,12 @@ Scripts will exit with error messages if:
 - Connection timeouts
 - Command execution failures
 - VLAN 3999 not found (envo_ping.exp only)
+- Gateway unreachable (user_ping.exp)
 
 ## Notes
 
 - Scripts use SSH options to skip host key verification
 - Timeout is set to 30 seconds for most operations
-- All configuration changes are cleaned up before script exit
-- Scripts are designed for Aruba switches with specific command syntax
+- All configuration changes are cleaned up before script exit (cg_ping.exp and envo_ping.exp)
+- **cg_ping.exp** and **envo_ping.exp** are designed for Aruba switches with specific command syntax
+- **user_ping.exp** works with any SSH-accessible gateway/router that supports ping commands
