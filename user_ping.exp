@@ -128,6 +128,19 @@ if {$is_broadcast == 1} {
         send "ping $target_ip count 2\r"
         set ping_success 0
         expect {
+            -re "Success rate is (\\d+) percent \\((\\d+)/(\\d+)\\)" {
+                set success_rate $expect_out(1,string)
+                set received $expect_out(2,string)
+                set total $expect_out(3,string)
+                if {$success_rate > 0} {
+                    puts "SUCCESS ($received/$total packets, ${success_rate}%)"
+                    lappend successful_pings $target_ip
+                    set ping_success 1
+                } else {
+                    puts "FAILED ($received/$total packets, ${success_rate}%)"
+                    lappend failed_pings $target_ip
+                }
+            }
             -re "2 packets transmitted, (\\d+) (packets )?received.*\\n.*%" {
                 set received $expect_out(1,string)
                 if {$received > 0} {
@@ -177,6 +190,19 @@ if {$is_broadcast == 1} {
         send "ping $target_ip count 2\r"
         set ping_success 0
         expect {
+            -re "Success rate is (\\d+) percent \\((\\d+)/(\\d+)\\)" {
+                set success_rate $expect_out(1,string)
+                set received $expect_out(2,string)
+                set total $expect_out(3,string)
+                if {$success_rate > 0} {
+                    puts "SUCCESS ($received/$total packets, ${success_rate}%)"
+                    lappend successful_pings $target_ip
+                    set ping_success 1
+                } else {
+                    puts "FAILED ($received/$total packets, ${success_rate}%)"
+                    lappend failed_pings $target_ip
+                }
+            }
             -re "2 packets transmitted, (\\d+) (packets )?received.*\\n.*%" {
                 set received $expect_out(1,string)
                 if {$received > 0} {
@@ -223,6 +249,19 @@ if {$is_broadcast == 1} {
     send "ping $client_ip count 4\r"
     set ping_success 0
     expect {
+        -re "Success rate is (\\d+) percent \\((\\d+)/(\\d+)\\)" {
+            set success_rate $expect_out(1,string)
+            set received $expect_out(2,string)
+            set total $expect_out(3,string)
+            if {$success_rate > 0} {
+                puts "SUCCESS ($received/$total packets, ${success_rate}%)"
+                lappend successful_pings $client_ip
+                set ping_success 1
+            } else {
+                puts "FAILED ($received/$total packets, ${success_rate}%)"
+                lappend failed_pings $client_ip
+            }
+        }
         -re "4 packets transmitted, (\\d+) (packets )?received.*\\n.*%" {
             set received $expect_out(1,string)
             if {$received > 0} {
